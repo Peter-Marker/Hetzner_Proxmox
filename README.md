@@ -1,0 +1,127 @@
+# Hetzner_Proxmox
+
+Infrastructure provisioning project for Hetzner Dedicated Server with Proxmox VE. This project handles the base virtualization layer, VM creation, and network configuration.
+
+## Overview
+
+This project provides automated provisioning of:
+- Proxmox VE hypervisor base configuration
+- Ubuntu VM template creation from cloud images
+- VM deployment with automated networking (NAT, port forwarding, IPv6 routing)
+- SSL/TLS certificate management via Let's Encrypt
+
+## Architecture
+
+### Infrastructure Components
+
+1. **Proxmox VE Host**: The base hypervisor running on Hetzner hardware
+2. **Ubuntu Template**: Reusable VM template (ID: 8001) created from Ubuntu 24.04 cloud image
+3. **AI Ops Center VM**: The main virtual machine cloned from the template with:
+   - 4 CPU cores, 10GB RAM, 40GB disk
+   - Internal IP: 10.72.72.10/24
+   - IPv6 connectivity via Hetzner routed setup
+   - Cloud-init based user configuration
+
+### Network Configuration
+
+The project implements a dual-stack networking setup:
+
+- **IPv4 NAT**: The Proxmox host performs DNAT (port forwarding) to expose VM services:
+  - Port 22 (SSH) → VM SSH access
+  - Port 8000 → Web services (Open WebUI, ai-brain)
+  - Port 9000 → Mobile API gateway (ai-gateway)
+
+- **IPv6 Routing**: Direct routing via Proxy NDP for the VM's public IPv6 address
+
+## Provisioning Tools
+
+### Terraform (bpg/proxmox provider)
+
+Automates the complete infrastructure lifecycle:
+
+1. Downloads Ubuntu 24.04 cloud image
+2. Creates VM template with cloud-init
+3. Deploys VMs by cloning the template
+4. Configures firewall rules, NAT, and IPv6 routing
+5. Generates Ansible inventory file
+
+### Ansible
+
+Configures the Proxmox hypervisor base system:
+
+- **proxmox_base**: Prepares the underlying Proxmox node
+
+## Quick Start
+
+### Prerequisites
+
+- Proxmox VE installed on Hetzner server
+- Terraform installed locally
+- Proxmox API token configured
+- SSH key pair for VM access
+
+### Deployment
+
+```bash
+# Initialize Terraform
+terraform init
+
+# Plan the deployment
+terraform plan
+
+# Apply infrastructure
+terraform apply
+```
+
+### Configuration
+
+All sensitive variables (API tokens, passwords, SSH keys) should be stored in a `terraform.tfvars` file or passed via environment variables. See `variables.tf` for the complete list of required inputs.
+
+## File Structure
+
+```
+Hetzner_Proxmox/
+├── main.tf                 # VM and infrastructure resources
+├── providers.tf            # Terraform and Proxmox provider config
+├── variables.tf            # Input variables
+├── cloud-init.tftpl        # VM cloud-init template
+├── ansible.cfg             # Ansible configuration
+├── site.yml                # Ansible playbook (Proxmox host only)
+├── roles/
+│   └── proxmox_base/       # Proxmox hypervisor configuration
+├── renew_proxmox_cert.sh   # ACME certificate renewal script
+└── README.md               # This file
+```
+
+## SSL Certificate Management
+
+SSL certificates are managed via Let's Encrypt using DNS-01 challenge through deSEC. The `renew_proxmox_cert.sh` script automates certificate renewal and can be scheduled via cron.
+
+## Network Troubleshooting
+
+If VMs lose network connectivity:
+
+```bash
+# Check IP forwarding on Proxmox
+sysctl net.ipv4.ip_forward
+sysctl net.ipv6.conf.all.forwarding
+
+# Verify NAT rules
+iptables -t nat -L -n
+
+# Check IPv6 proxy NDP
+ip -6 neigh show proxy
+
+# Verify bridge configuration
+ip addr show vmbr1
+```
+
+## Cleaning Up
+
+To destroy all infrastructure:
+
+```bash
+terraform destroy
+```
+
+**Warning**: This will remove all VMs and networking configuration.
