@@ -22,6 +22,22 @@ resource "proxmox_virtual_environment_file" "cloud_config_ai_ops" {
   }
 }
 
+# Generate cloud-init configuration for web-server
+resource "proxmox_virtual_environment_file" "cloud_config_web_server" {
+  content_type = "snippets"
+  datastore_id = "local"
+  node_name    = "prox"
+  source_raw {
+    data = templatefile("${path.module}/cloud-init.tftpl", {
+      ssh_user     = var.ci_user
+      ssh_password = var.ci_password
+      ssh_key      = var.ci_ssh_key
+      ssh_port     = var.vm2_ssh_port
+    })
+    file_name = "cloud-config-web-server.yaml"
+  }
+}
+
 # Create a VM template from the downloaded cloud image
 resource "proxmox_virtual_environment_vm" "ubuntu_template_8001" {
   name          = "ubuntu-2404-template"
@@ -68,7 +84,7 @@ resource "proxmox_virtual_environment_vm" "ai_ops_center" {
     units = 1000
   }
   memory {
-    dedicated = 10240
+    dedicated = 16384
   }
   agent {
     enabled = true
@@ -80,7 +96,7 @@ resource "proxmox_virtual_environment_vm" "ai_ops_center" {
   disk {
     datastore_id = "local-zfs"
     interface    = "scsi0"
-    size         = 40
+    size         = 50
     iothread     = true
     discard      = "on"
     file_format  = "raw"
@@ -106,6 +122,53 @@ resource "proxmox_virtual_environment_vm" "ai_ops_center" {
   depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
 }
 
+# Deploy the web-server VM by cloning the template
+resource "proxmox_virtual_environment_vm" "web_server" {
+  name      = "web-server"
+  node_name = "prox"
+  cpu {
+    cores = 2
+    type  = "host"
+  }
+  memory {
+    dedicated = 4096
+  }
+  agent {
+    enabled = true
+  }
+  clone {
+    vm_id = 8001
+    full  = true
+  }
+  disk {
+    datastore_id = "local-zfs"
+    interface    = "scsi0"
+    size         = 20
+    iothread     = true
+    discard      = "on"
+    file_format  = "raw"
+  }
+  network_device {
+    bridge = "vmbr1"
+  }
+  initialization {
+    datastore_id = "local-zfs"
+    interface    = "ide2"
+    ip_config {
+      ipv4 {
+        address = "10.72.72.50/24"
+        gateway = "10.72.72.1"
+      }
+      ipv6 {
+        address = "${var.vm2_ipv6}/128"
+        gateway = "fe80::1"
+      }
+    }
+    user_data_file_id = proxmox_virtual_environment_file.cloud_config_web_server.id
+  }
+  depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
+}
+
 # Configure networking on the Proxmox host (NAT, Port Forwarding, IPv6 Routing)
 resource "null_resource" "network_setup" {
   triggers = {
@@ -115,11 +178,20 @@ resource "null_resource" "network_setup" {
     vm_ipv6     = var.vm1_ipv6
     port        = var.vm1_ssh_port
 
+    # VM2 (web-server) triggers
+    vm2_ip       = "10.72.72.50"
+    vm2_ipv6     = var.vm2_ipv6
+    vm2_ssh_port = var.vm2_ssh_port
+    pm_ip_var    = var.pm_ip
+
     # Terraform will re-run the provisioner if the hash of this string changes
     script_hash = sha1(join("", [
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm1_ssh_port} -j DNAT --to-destination 10.72.72.10:${var.vm1_ssh_port}",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 8000 -j DNAT --to-destination 10.72.72.10:8000",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 9000 -j DNAT --to-destination 10.72.72.10:9000",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm2_ssh_port} -j DNAT --to-destination 10.72.72.50:${var.vm2_ssh_port}",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 80 -j DNAT --to-destination 10.72.72.50:80",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 443 -j DNAT --to-destination 10.72.72.50:443",
       # Add future ports here to keep them tracked
     ]))
   }
@@ -150,11 +222,17 @@ resource "null_resource" "network_setup" {
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.port} -j DNAT --to-destination ${self.triggers.vm_ip}:${self.triggers.port}",
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 8000 -j DNAT --to-destination ${self.triggers.vm_ip}:8000",
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 9000 -j DNAT --to-destination ${self.triggers.vm_ip}:9000",
+      # VM2 (web-server) port forwarding
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.vm2_ssh_port} -j DNAT --to-destination ${self.triggers.vm2_ip}:${self.triggers.vm2_ssh_port}",
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 80 -j DNAT --to-destination ${self.triggers.vm2_ip}:80",
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 443 -j DNAT --to-destination ${self.triggers.vm2_ip}:443",
       "iptables -t nat -A POSTROUTING -s 10.72.72.0/24 -o vmbr0 -j MASQUERADE",
       # IPv6 Routing & Proxy NDP: Crucial for Hetzner routed setup
       "ip6tables -I FORWARD -j ACCEPT",
       "ip -6 neigh replace proxy ${self.triggers.vm_ipv6} dev vmbr0",
       "ip -6 route replace ${self.triggers.vm_ipv6}/128 dev vmbr1",
+      "ip -6 neigh replace proxy ${self.triggers.vm2_ipv6} dev vmbr0",
+      "ip -6 route replace ${self.triggers.vm2_ipv6}/128 dev vmbr1",
       # Make rules persistent across reboots
       "netfilter-persistent save"
     ]
@@ -163,8 +241,10 @@ resource "null_resource" "network_setup" {
   provisioner "remote-exec" {
     when = destroy
     inline = [
-      "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.port} -j DNAT --to-destination ${self.triggers.vm_ip}:${self.triggers.port}",
-      "ip -6 neigh del proxy ${self.triggers.vm_ipv6} dev vmbr0",
+      "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.port} -j DNAT --to-destination ${self.triggers.vm_ip}:${self.triggers.port} || true",
+      "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 8000 -j DNAT --to-destination ${self.triggers.vm_ip}:8000 || true",
+      "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 9000 -j DNAT --to-destination ${self.triggers.vm_ip}:9000 || true",
+      "ip -6 neigh del proxy ${self.triggers.vm_ipv6} dev vmbr0 || true",
       "netfilter-persistent save"
     ]
     on_failure = continue
@@ -183,6 +263,10 @@ resource "local_file" "ansible_inventory" {
     [ai_ops]
     # The managed VM
     ai-ops-center ansible_host=${var.pm_ip} ansible_port=${var.vm1_ssh_port} ansible_user=${var.ci_user}
+
+    [web_server]
+    # The web server VM
+    web-server ansible_host=${var.pm_ip} ansible_port=${var.vm2_ssh_port} ansible_user=${var.ci_user}
 
     [all:vars]
     # Global settings: skip SSH key confirmation for new automated nodes

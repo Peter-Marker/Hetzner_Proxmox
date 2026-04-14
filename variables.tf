@@ -49,7 +49,7 @@ variable "pm_ssh_port" {
   type        = number
 }
 
-# VM specific settings
+# VM1 specific settings
 variable "vm1_ipv6" {
   description = "IPv6 address for ai_ops_center"
   type        = string
@@ -57,5 +57,16 @@ variable "vm1_ipv6" {
 
 variable "vm1_ssh_port" {
   description = "SSH port for VM ai_ops_center"
+  type        = number
+}
+
+# VM2 specific settings
+variable "vm2_ipv6" {
+  description = "IPv6 address for web-server"
+  type        = string
+}
+
+variable "vm2_ssh_port" {
+  description = "SSH port for VM web-server"
   type        = number
 }

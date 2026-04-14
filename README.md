@@ -16,9 +16,14 @@ This project provides automated provisioning of:
 
 1. **Proxmox VE Host**: The base hypervisor running on Hetzner hardware
 2. **Ubuntu Template**: Reusable VM template (ID: 8001) created from Ubuntu 24.04 cloud image
-3. **AI Ops Center VM**: The main virtual machine cloned from the template with:
-   - 4 CPU cores, 10GB RAM, 40GB disk
+3. **AI Ops Center VM**: The main management virtual machine cloned from the template with:
+   - 4 CPU cores, 16GB RAM, 50GB disk
    - Internal IP: 10.72.72.10/24
+   - IPv6 connectivity via Hetzner routed setup
+   - Cloud-init based user configuration
+4. **Web Server VM**: Web services virtual machine cloned from the template with:
+   - 2 CPU cores, 4GB RAM, 20GB disk
+   - Internal IP: 10.72.72.50/24
    - IPv6 connectivity via Hetzner routed setup
    - Cloud-init based user configuration
 
@@ -27,11 +32,16 @@ This project provides automated provisioning of:
 The project implements a dual-stack networking setup:
 
 - **IPv4 NAT**: The Proxmox host performs DNAT (port forwarding) to expose VM services:
-  - Port 22 (SSH) → VM SSH access
-  - Port 8000 → Web services (Open WebUI, ai-brain)
-  - Port 9000 → Mobile API gateway (ai-gateway)
+  - ai-ops-center (10.72.72.10):
+    - `TF_VAR_vm1_ssh_port` → SSH access
+    - Port 8000 → Web services (Open WebUI, ai-brain)
+    - Port 9000 → Mobile API gateway (ai-gateway)
+  - web-server (10.72.72.50):
+    - `TF_VAR_vm2_ssh_port` → SSH access
+    - Port 80 → HTTP
+    - Port 443 → HTTPS
 
-- **IPv6 Routing**: Direct routing via Proxy NDP for the VM's public IPv6 address
+- **IPv6 Routing**: Direct routing via Proxy NDP for each VM's public IPv6 address
 
 ## Provisioning Tools
 
