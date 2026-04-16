@@ -1,0 +1,40 @@
+---
+# Proxmox ACME Certificate Renewal
+# This role deploys the certificate renewal script and configures automatic renewal via cron.
+
+- name: Ensure log directory exists
+  ansible.builtin.file:
+    path: /var/log
+    state: directory
+    mode: "0755"
+
+- name: Deploy Proxmox ACME certificate renewal script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/renew_proxmox_cert.sh
+    content: |
+      #!/bin/bash
+      # Proxmox ACME Certificate Renewal Script
+      # This script is intended to be used on Proxmox nodes to automate certificate renewal.
+      # It expects DEDYN_TOKEN to be set in the environment or provided here.
+
+      # Use environment variable if set, otherwise use placeholder
+      TOKEN="${DEDYN_TOKEN:-YOUR_DEDYN_TOKEN_HERE}"
+
+      export DEDYN_TOKEN="$TOKEN"
+
+      LOG_FILE="/var/log/proxmox_cert_renew.log"
+
+      echo "$(date): Checking and renewing Proxmox ACME certificate..." >> "$LOG_FILE"
+      pvenode acme cert renew >> "$LOG_FILE" 2>&1
+      echo "$(date): Renewal process finished." >> "$LOG_FILE"
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Configure cron job for automatic certificate renewal
+  ansible.builtin.cron:
+    name: "Proxmox ACME certificate renewal"
+    user: root
+    job: "/usr/local/bin/renew_proxmox_cert.sh"
+    special_time: daily
+    state: present

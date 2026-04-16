@@ -4,3 +4,4 @@
   become: true
   roles:
     - role: proxmox_base
+    - role: proxmox_acme

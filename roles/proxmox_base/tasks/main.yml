@@ -3,6 +3,16 @@
 # This role handles initial setup for Proxmox VE nodes, including repository management
 # and UI adjustments for non-subscription environments.
 
+# --- SSH Configuration ---
+
+- name: Configure Proxmox SSH port
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Port "
+    line: "Port {{ lookup('env', 'TF_VAR_pm_ssh_port') | default(22, true) }}"
+    state: present
+  notify: Restart sshd
+
 # --- Repository Management ---
 # We remove or disable enterprise repositories to avoid 401 errors when no subscription is present.
 

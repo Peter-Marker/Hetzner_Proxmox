@@ -1,0 +1,4 @@
+---
+# Proxmox node-specific variables
+# SSH port is read from the TF_VAR_pm_ssh_port environment variable
+ansible_port: "{{ lookup('env', 'TF_VAR_pm_ssh_port') | default(43030, true) | int }}"

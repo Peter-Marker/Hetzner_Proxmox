@@ -59,7 +59,8 @@ Automates the complete infrastructure lifecycle:
 
 Configures the Proxmox hypervisor base system:
 
-- **proxmox_base**: Prepares the underlying Proxmox node
+- **proxmox_base**: Prepares the underlying Proxmox node (repositories, SSH port, UI tweaks)
+- **proxmox_acme**: Deploys ACME certificate renewal script and configures automatic daily cron job
 
 ## Quick Start
 
@@ -73,6 +74,10 @@ Configures the Proxmox hypervisor base system:
 ### Deployment
 
 ```bash
+# Set required environment variables
+export TF_VAR_pm_ssh_port=43030
+export DEDYN_TOKEN=your_desec_token_here
+
 # Initialize Terraform
 terraform init
 
@@ -81,6 +86,9 @@ terraform plan
 
 # Apply infrastructure
 terraform apply
+
+# Configure Proxmox host via Ansible
+ansible-playbook site.yml
 ```
 
 ### Configuration
@@ -97,15 +105,19 @@ Hetzner_Proxmox/
 ├── cloud-init.tftpl        # VM cloud-init template
 ├── ansible.cfg             # Ansible configuration
 ├── site.yml                # Ansible playbook (Proxmox host only)
+├── inventory.ini           # Ansible inventory
+├── host_vars/
+│   └── proxmox_node.yml    # Proxmox node-specific variables (SSH port)
 ├── roles/
-│   └── proxmox_base/       # Proxmox hypervisor configuration
-├── renew_proxmox_cert.sh   # ACME certificate renewal script
+│   ├── proxmox_base/       # Proxmox hypervisor configuration (repos, SSH, UI)
+│   └── proxmox_acme/       # ACME certificate renewal script + cron job
+├── renew_proxmox_cert.sh   # Legacy ACME certificate renewal script (reference)
 └── README.md               # This file
 ```
 
 ## SSL Certificate Management
 
-SSL certificates are managed via Let's Encrypt using DNS-01 challenge through deSEC. The `renew_proxmox_cert.sh` script automates certificate renewal and can be scheduled via cron.
+SSL certificates are managed via Let's Encrypt using DNS-01 challenge through deSEC. The `proxmox_acme` Ansible role deploys the renewal script to `/usr/local/bin/renew_proxmox_cert.sh` and configures a daily cron job for automatic renewal. Set the `DEDYN_TOKEN` environment variable before running the playbook.
 
 ## Network Troubleshooting
 
