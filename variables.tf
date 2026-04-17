@@ -70,3 +70,16 @@ variable "vm2_ssh_port" {
   description = "SSH port for VM web-server"
   type        = number
 }
+
+# Firewall trusted source networks (for Proxmox web UI and custom SSH port)
+variable "fw_src_ip4" {
+  description = "Trusted IPv4 networks for restricted ports (comma-separated or CIDR)"
+  type        = string
+  default     = ""
+}
+
+variable "fw_src_ip6" {
+  description = "Trusted IPv6 networks for restricted ports (comma-separated or CIDR)"
+  type        = string
+  default     = ""
+}

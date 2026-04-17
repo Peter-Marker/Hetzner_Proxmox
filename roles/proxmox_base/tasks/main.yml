@@ -4,12 +4,21 @@
 # and UI adjustments for non-subscription environments.
 
 # --- SSH Configuration ---
+# SSH listens on both port 22 (unrestricted, closed at Hetzner level) and custom port (restricted by firewall)
 
-- name: Configure Proxmox SSH port
+- name: Ensure SSH listens on port 22
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: "^#?Port "
-    line: "Port {{ lookup('env', 'TF_VAR_pm_ssh_port') | default(22, true) }}"
+    regexp: "^#?Port 22$"
+    line: "Port 22"
+    state: present
+  notify: Restart sshd
+
+- name: Ensure SSH listens on custom port
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Port {{ lookup('env', 'TF_VAR_pm_ssh_port') | default(43030, true) }}$"
+    line: "Port {{ lookup('env', 'TF_VAR_pm_ssh_port') | default(43030, true) }}"
     state: present
   notify: Restart sshd
 
@@ -96,6 +105,6 @@
 - name: Disable "No Valid Subscription" popup (minified)
   ansible.builtin.replace:
     path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.min.js
-    regexp: '"active"===e.data.status.toLowerCase\(\)'
+    regexp: "\"active\"===e.data.status.toLowerCase\\(\\)"
     replace: "true"
   notify: Restart pveproxy

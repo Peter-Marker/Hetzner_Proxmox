@@ -72,6 +72,10 @@ resource "proxmox_virtual_environment_vm" "ubuntu_template_8001" {
   network_device {
     bridge = "vmbr1"
   }
+  lifecycle {
+    # Suppress spurious changes from the Proxmox provider for computed attributes
+    ignore_changes = [ipv4_addresses, ipv6_addresses, network_interface_names]
+  }
 }
 
 # Deploy the main VM by cloning the template
@@ -274,3 +278,6 @@ resource "local_file" "ansible_inventory" {
     ansible_python_interpreter=/usr/bin/python3
   EOT
 }
+
+# NOTE: Proxmox firewall configuration is handled by Ansible (proxmox_firewall role)
+# after terraform apply. See site.yml for the Ansible workflow.

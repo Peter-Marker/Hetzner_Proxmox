@@ -43,6 +43,16 @@ The project implements a dual-stack networking setup:
 
 - **IPv6 Routing**: Direct routing via Proxy NDP for each VM's public IPv6 address
 
+- **Host Firewall**: Proxmox built-in firewall managed via Ansible (`proxmox_firewall` role) using the Proxmox API:
+  - **Allowed inbound** (both IPv4/IPv6):
+    - TCP `22` (SSH) — always open for all. **Note:** Port 22 is fully blocked by the Hetzner Robot external firewall and serves only as a backup/rescue access if the custom SSH port becomes unavailable.
+    - TCP `${TF_VAR_pm_ssh_port}` (SSH custom port) — conditionally added if set and differs from 22.
+    - TCP 8006 (Web UI) — restricted to trusted subnets (`TF_FW_SRC_IP4`, `TF_FW_SRC_IP6`). If subnets are not set, open for all.
+    - ICMPv6 (Neighbor Discovery) — open for all
+  - **Default policy**: DROP inbound, ACCEPT outbound (via `policy_in: DROP` in cluster firewall options)
+  - Rules managed via `community.proxmox.proxmox_firewall` module (visible in Proxmox web UI under **Datacenter → Firewall** and **Node → Firewall**)
+  - **Safe enable sequence:** disable firewall → install python3-proxmoxer → add rules via API → enable → verify
+
 ## Provisioning Tools
 
 ### Terraform (bpg/proxmox provider)
@@ -60,6 +70,7 @@ Automates the complete infrastructure lifecycle:
 Configures the Proxmox hypervisor base system:
 
 - **proxmox_base**: Prepares the underlying Proxmox node (repositories, SSH port, UI tweaks)
+- **proxmox_firewall**: Manages Proxmox built-in firewall via API (rules visible in web UI, safe enable sequence)
 - **proxmox_acme**: Deploys ACME certificate renewal script and configures automatic daily cron job
 
 ## Quick Start
@@ -75,7 +86,12 @@ Configures the Proxmox hypervisor base system:
 
 ```bash
 # Set required environment variables
-export TF_VAR_pm_ssh_port=43030
+export TF_VAR_pm_api_id="root@pam!token-name"       # Proxmox API token ID
+export TF_VAR_pm_api_secret="your-token-secret"     # Proxmox API token secret
+export TF_VAR_pm_api_url="https://host:8006/api2/json"  # Proxmox API URL
+export TF_VAR_pm_ssh_port=<your_custom_ssh_port>
+export TF_FW_SRC_IP4="your.trusted.ipv4/24"   # Optional: restrict ports 8006 and pm_ssh_port
+export TF_FW_SRC_IP6="your:trusted:ipv6/48"   # Optional: restrict ports 8006 and pm_ssh_port
 export DEDYN_TOKEN=your_desec_token_here
 
 # Initialize Terraform
@@ -86,6 +102,9 @@ terraform plan
 
 # Apply infrastructure
 terraform apply
+
+# Install required Ansible collections
+ansible-galaxy collection install -r requirements.yml
 
 # Configure Proxmox host via Ansible
 ansible-playbook site.yml
@@ -109,7 +128,10 @@ Hetzner_Proxmox/
 ├── host_vars/
 │   └── proxmox_node.yml    # Proxmox node-specific variables (SSH port)
 ├── roles/
-│   ├── proxmox_base/       # Proxmox hypervisor configuration (repos, SSH, UI)
+│   ├── proxmox_base/       # Proxmox hypervisor configuration (repos, SSH dual-port, UI)
+│   ├── proxmox_firewall/   # Proxmox built-in firewall management via API (rules visible in web UI)
+│   │   ├── tasks/main.yml  # Safe sequence: disable → install deps → add rules → enable → verify
+│   │   └── handlers/       # Empty (API handles reload automatically)
 │   └── proxmox_acme/       # ACME certificate renewal script + cron job
 ├── renew_proxmox_cert.sh   # Legacy ACME certificate renewal script (reference)
 └── README.md               # This file

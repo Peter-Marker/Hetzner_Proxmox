@@ -1,0 +1,6 @@
+---
+
+# Handlers for proxmox_firewall role
+# Note: Firewall reload is handled via the Proxmox API (community.proxmox.proxmox_firewall module)
+# directly in the tasks, so no systemd restart handler is needed.
+# This file is kept for future extensibility.

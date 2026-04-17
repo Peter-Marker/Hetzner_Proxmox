@@ -1,4 +1,20 @@
 ---
 # Proxmox node-specific variables
+
 # SSH port is read from the TF_VAR_pm_ssh_port environment variable
-ansible_port: "{{ lookup('env', 'TF_VAR_pm_ssh_port') | default(43030, true) | int }}"
+ansible_port: "{{ lookup('env', 'TF_VAR_pm_ssh_port') | default(22, true) | int }}"
+
+# Firewall trusted source networks (for Proxmox web UI access on port 8006)
+# If empty, access is allowed from all sources
+fw_src_ip4: "{{ lookup('env', 'TF_FW_SRC_IP4') | default('', true) }}"
+fw_src_ip6: "{{ lookup('env', 'TF_FW_SRC_IP6') | default('', true) }}"
+
+# Proxmox API connection for firewall management
+# TF_VAR_pm_api_id contains the full token ID (user@realm!tokenname)
+# TF_VAR_pm_api_url contains the full URL
+# Split the full token ID into user and token name for the module
+proxmox_api_user: "{{ lookup('env', 'TF_VAR_pm_api_id') | regex_replace('!.*$', '') }}"
+proxmox_api_token_name: "{{ lookup('env', 'TF_VAR_pm_api_id') | regex_replace('^.*!', '') }}"
+proxmox_api_token_secret: "{{ lookup('env', 'TF_VAR_pm_api_secret') | default('', true) }}"
+# Full API base URL for direct uri module calls
+proxmox_api_base_url: "{{ lookup('env', 'TF_VAR_pm_api_url') }}"

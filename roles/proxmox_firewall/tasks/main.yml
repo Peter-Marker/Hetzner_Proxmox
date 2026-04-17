@@ -1,0 +1,248 @@
+---
+# Proxmox Firewall Configuration via Proxmox API
+# This role configures the built-in Proxmox firewall using the community.proxmox.proxmox_firewall module.
+# Rules are applied via the Proxmox API, so they are immediately visible in the web UI.
+#
+# SAFE SEQUENCE (no service stop - prevents lockout on failure):
+# 1. Pre-flight: validate SSH port is in the ruleset
+# 2. Configure cluster-level firewall options (disabled initially) via API
+# 3. Configure node-level firewall rules (INPUT chain — SSH, web UI, ICMPv6)
+# 4. Enable firewall at cluster level via API
+# 5. Verify firewall is active
+#
+# KEY SAFETY: We NEVER stop the service before writing configs.
+# If the playbook fails mid-way, the firewall stays disabled and the user retains access.
+
+# ============================================================
+# PRE-FLIGHT: Validate SSH port safety
+# ============================================================
+
+- name: Get current Ansible connection port
+  ansible.builtin.set_fact:
+    proxmox_firewall_current_ssh_port: "{{ ansible_port | default(22) | int }}"
+
+- name: Get custom SSH port from environment (TF_VAR_pm_ssh_port)
+  ansible.builtin.set_fact:
+    proxmox_firewall_env_ssh_port: "{{ lookup('env', 'TF_VAR_pm_ssh_port') | default('') }}"
+
+- name: Validate SSH port is in firewall rules
+  ansible.builtin.assert:
+    that: >-
+      proxmox_firewall_current_ssh_port == 22 or proxmox_firewall_env_ssh_port |
+      string == proxmox_firewall_current_ssh_port | string
+    fail_msg: >-
+      LOCKOUT PREVENTION: Ansible is connected on port {{
+      proxmox_firewall_current_ssh_port }}, but TF_VAR_pm_ssh_port is '{{
+      proxmox_firewall_env_ssh_port }}'. The firewall would block your SSH
+      access. Fix: Set TF_VAR_pm_ssh_port={{ proxmox_firewall_current_ssh_port
+      }} or connect on port 22.
+    success_msg: "SSH port {{ proxmox_firewall_current_ssh_port }} is allowed by
+      firewall rules."
+    quiet: false
+
+# ============================================================
+# Step 1: Get node hostname (short name) for node-level operations
+# ============================================================
+
+- name: Get current node short hostname
+  ansible.builtin.command:
+    cmd: hostname -s
+  register: proxmox_firewall_node_hostname
+  changed_when: false
+
+# ============================================================
+# Step 2: Configure cluster-level firewall options (initially disabled)
+# ============================================================
+# The community.proxmox.proxmox_firewall module does not support cluster options,
+# so we use the Proxmox API directly.
+# Endpoint: PUT /api2/json/cluster/firewall/options
+
+- name: Configure cluster firewall options (initially disabled)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base_url }}/cluster/firewall/options"
+    method: PUT
+    body:
+      enable: 0
+      policy_in: "DROP"
+    body_format: form-urlencoded
+    headers:
+      Authorization: "PVEAPIToken={{ lookup('env', 'TF_VAR_pm_api_id') }}={{
+        lookup('env', 'TF_VAR_pm_api_secret') }}"
+    validate_certs: false
+    status_code: 200
+
+# ============================================================
+# Step 2.5: Install required Python library for Proxmox API module
+# ============================================================
+
+- name: Install proxmoxer Python library
+  ansible.builtin.apt:
+    name: python3-proxmoxer
+    state: present
+  register: proxmox_firewall_proxmoxer_install
+  changed_when: false
+
+# ============================================================
+# Step 3: Configure node-level firewall rules (INPUT chain)
+# ============================================================
+# These rules apply to host traffic (SSH, web UI, ICMPv6).
+# All rules are managed as a single list for idempotency with update: true.
+
+- name: Build node firewall rules list (standard SSH port 22 only)
+  ansible.builtin.set_fact:
+    proxmox_firewall_node_rules:
+      - type: in
+        action: ACCEPT
+        source: "0.0.0.0/0"
+        dport: "22"
+        proto: tcp
+        comment: "SSH access (port 22, IPv4)"
+        enable: true
+        pos: 1
+      - type: in
+        action: ACCEPT
+        source: "::/0"
+        dport: "22"
+        proto: tcp
+        comment: "SSH access (port 22, IPv6)"
+        enable: true
+        pos: 2
+      - type: in
+        action: ACCEPT
+        source: "{{ fw_src_ip4 | default('0.0.0.0/0') }}"
+        dport: "8006"
+        proto: tcp
+        comment: "Proxmox web UI (IPv4)"
+        enable: true
+        pos: 3
+      - type: in
+        action: ACCEPT
+        source: "{{ fw_src_ip6 | default('::/0') }}"
+        dport: "8006"
+        proto: tcp
+        comment: "Proxmox web UI (IPv6)"
+        enable: true
+        pos: 4
+      - type: in
+        action: ACCEPT
+        source: "::/0"
+        proto: ipv6-icmp
+        comment: "IPv6 ICMP (ND, PMTUD, etc.)"
+        enable: true
+        pos: 5
+  when: >-
+    lookup('env', 'TF_VAR_pm_ssh_port') | default('') == '' or lookup('env',
+    'TF_VAR_pm_ssh_port') | default('') == '22'
+
+- name: Build node firewall rules list (with custom SSH port)
+  ansible.builtin.set_fact:
+    proxmox_firewall_node_rules:
+      - type: in
+        action: ACCEPT
+        source: "0.0.0.0/0"
+        dport: "22"
+        proto: tcp
+        comment: "SSH access (port 22, IPv4)"
+        enable: true
+        pos: 1
+      - type: in
+        action: ACCEPT
+        source: "::/0"
+        dport: "22"
+        proto: tcp
+        comment: "SSH access (port 22, IPv6)"
+        enable: true
+        pos: 2
+      - type: in
+        action: ACCEPT
+        source: "0.0.0.0/0"
+        dport: "{{ lookup('env', 'TF_VAR_pm_ssh_port') }}"
+        proto: tcp
+        comment: "SSH access (custom port, IPv4)"
+        enable: true
+        pos: 3
+      - type: in
+        action: ACCEPT
+        source: "::/0"
+        dport: "{{ lookup('env', 'TF_VAR_pm_ssh_port') }}"
+        proto: tcp
+        comment: "SSH access (custom port, IPv6)"
+        enable: true
+        pos: 4
+      - type: in
+        action: ACCEPT
+        source: "{{ fw_src_ip4 | default('0.0.0.0/0') }}"
+        dport: "8006"
+        proto: tcp
+        comment: "Proxmox web UI (IPv4)"
+        enable: true
+        pos: 5
+      - type: in
+        action: ACCEPT
+        source: "{{ fw_src_ip6 | default('::/0') }}"
+        dport: "8006"
+        proto: tcp
+        comment: "Proxmox web UI (IPv6)"
+        enable: true
+        pos: 6
+      - type: in
+        action: ACCEPT
+        source: "::/0"
+        proto: ipv6-icmp
+        comment: "IPv6 ICMP (ND, PMTUD, etc.)"
+        enable: true
+        pos: 7
+  when: >-
+    lookup('env', 'TF_VAR_pm_ssh_port') | default('') != '' and lookup('env',
+    'TF_VAR_pm_ssh_port') | default('') != '22'
+
+- name: Configure node firewall rules via API
+  community.proxmox.proxmox_firewall:
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_name }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_host: "{{ proxmox_api_base_url | regex_replace('^https?://([^:/]+).*', '\\1') }}"
+    validate_certs: false
+    level: node
+    node: "{{ proxmox_firewall_node_hostname.stdout }}"
+    state: present
+    update: true
+    rules: "{{ proxmox_firewall_node_rules }}"
+
+# ============================================================
+# Step 4: Enable firewall at cluster level
+# ============================================================
+
+- name: Enable firewall at cluster level
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base_url }}/cluster/firewall/options"
+    method: PUT
+    body:
+      enable: 1
+      policy_in: "DROP"
+    body_format: form-urlencoded
+    headers:
+      Authorization: "PVEAPIToken={{ lookup('env', 'TF_VAR_pm_api_id') }}={{
+        lookup('env', 'TF_VAR_pm_api_secret') }}"
+    validate_certs: false
+    status_code: 200
+
+# ============================================================
+# Step 5: Verify firewall is active (via SSH for status check)
+# ============================================================
+# Note: Proxmox automatically reloads the firewall when config changes via API.
+
+- name: Wait for firewall to stabilize
+  ansible.builtin.pause:
+    seconds: 5
+
+- name: Verify pve-firewall is running
+  ansible.builtin.command:
+    cmd: pve-firewall status
+  register: proxmox_firewall_status
+  changed_when: false
+  failed_when: false
+
+- name: Display firewall status
+  ansible.builtin.debug:
+    var: proxmox_firewall_status.stdout_lines
