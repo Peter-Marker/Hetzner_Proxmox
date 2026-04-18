@@ -46,12 +46,22 @@ The project implements a dual-stack networking setup:
 - **Host Firewall**: Proxmox built-in firewall managed via Ansible (`proxmox_firewall` role) using the Proxmox API:
   - **Allowed inbound** (both IPv4/IPv6):
     - TCP `22` (SSH) — always open for all. **Note:** Port 22 is fully blocked by the Hetzner Robot external firewall and serves only as a backup/rescue access if the custom SSH port becomes unavailable.
-    - TCP `${TF_VAR_pm_ssh_port}` (SSH custom port) — conditionally added if set and differs from 22.
-    - TCP 8006 (Web UI) — restricted to trusted subnets (`TF_FW_SRC_IP4`, `TF_FW_SRC_IP6`). If subnets are not set, open for all.
+    - TCP `8006,${TF_VAR_pm_ssh_port}` (Web UI + SSH custom port) — merged into single rule, restricted to trusted subnets (`TF_FW_SRC_IP4`, `TF_FW_SRC_IP6`). If subnets are not set, open for all.
     - ICMPv6 (Neighbor Discovery) — open for all
   - **Default policy**: DROP inbound, ACCEPT outbound (via `policy_in: DROP` in cluster firewall options)
   - Rules managed via `community.proxmox.proxmox_firewall` module (visible in Proxmox web UI under **Datacenter → Firewall** and **Node → Firewall**)
-  - **Safe enable sequence:** disable firewall → install python3-proxmoxer → add rules via API → enable → verify
+  - **Safe enable sequence:**
+    1. Pre-flight: validate SSH port matches firewall rules
+    2. Configure cluster firewall options (disabled initially)
+    3. Install `python3-proxmoxer` library
+    4. Configure node firewall rules via API
+    5. Pre-flight: verify SSH rules exist before enabling DROP
+    6. Enable cluster firewall
+    7. Check/enable node firewall via API
+    8. Verify SSH connectivity (fail with recovery instructions if lost)
+    9. Unmask + enable + start `pve-firewall` systemd service
+    10. Verify firewall status
+  - **Known issue:** `community.proxmox.proxmox_firewall` module may create duplicate rules on repeated runs due to Proxmox API not honoring `pos` parameter.
 
 ## Provisioning Tools
 
