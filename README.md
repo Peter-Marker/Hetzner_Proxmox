@@ -44,6 +44,8 @@ The project implements a dual-stack networking setup:
 - **IPv6 Routing**: Direct routing via Proxy NDP for each VM's public IPv6 address
 
 - **Host Firewall**: Proxmox built-in firewall managed via Ansible (`proxmox_firewall` role) using the Proxmox API:
+  - **VM isolation** (blocks VMs from accessing Proxmox host services):
+    - TCP `22,8006,3128,85,5900:5999,${TF_VAR_pm_ssh_port}` — DROP from `10.72.72.0/24` (IPv4), `${TF_VAR_pm_ipv6_prefix}` (IPv6 routed), and `fe80::/10` (IPv6 link-local)
   - **Allowed inbound** (both IPv4/IPv6):
     - TCP `22` (SSH) — always open for all. **Note:** Port 22 is fully blocked by the Hetzner Robot external firewall and serves only as a backup/rescue access if the custom SSH port becomes unavailable.
     - TCP `8006,${TF_VAR_pm_ssh_port}` (Web UI + SSH custom port) — merged into single rule, restricted to trusted subnets (`TF_FW_SRC_IP4`, `TF_FW_SRC_IP6`). If subnets are not set, open for all.
@@ -79,7 +81,7 @@ Automates the complete infrastructure lifecycle:
 
 Configures the Proxmox hypervisor base system:
 
-- **proxmox_base**: Prepares the underlying Proxmox node (repositories, SSH port, UI tweaks)
+- **proxmox_base**: Prepares the underlying Proxmox node (repositories, SSH port hardened to key-only, UI tweaks)
 - **proxmox_firewall**: Manages Proxmox built-in firewall via API (rules visible in web UI, safe enable sequence)
 - **proxmox_acme**: Deploys ACME certificate renewal script and configures automatic daily cron job
 
@@ -100,6 +102,7 @@ export TF_VAR_pm_api_id="root@pam!token-name"       # Proxmox API token ID
 export TF_VAR_pm_api_secret="your-token-secret"     # Proxmox API token secret
 export TF_VAR_pm_api_url="https://host:8006/api2/json"  # Proxmox API URL
 export TF_VAR_pm_ssh_port=<your_custom_ssh_port>
+export TF_VAR_pm_ipv6_prefix="2a01:4f8:xxx:xxxx::/64"  # Hetzner IPv6 /64 prefix for VM isolation
 export TF_FW_SRC_IP4="your.trusted.ipv4/24"   # Optional: restrict ports 8006 and pm_ssh_port
 export TF_FW_SRC_IP6="your:trusted:ipv6/48"   # Optional: restrict ports 8006 and pm_ssh_port
 export DEDYN_TOKEN=your_desec_token_here

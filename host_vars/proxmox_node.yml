@@ -18,3 +18,7 @@ proxmox_api_token_name: "{{ lookup('env', 'TF_VAR_pm_api_id') | regex_replace('^
 proxmox_api_token_secret: "{{ lookup('env', 'TF_VAR_pm_api_secret') | default('', true) }}"
 # Full API base URL for direct uri module calls
 proxmox_api_base_url: "{{ lookup('env', 'TF_VAR_pm_api_url') }}"
+
+# Proxmox host IPv6 prefix for VM isolation (e.g., "2a01:4f8:xxx:xxxx::/64")
+# Used to block VM IPv6 addresses from accessing Proxmox host services
+proxmox_ipv6_prefix: "{{ lookup('env', 'TF_VAR_pm_ipv6_prefix') | default('', true) }}"

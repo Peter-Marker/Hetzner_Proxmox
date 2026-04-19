@@ -91,6 +91,33 @@
 - name: Build node firewall rules list (base rules — always included)
   ansible.builtin.set_fact:
     proxmox_firewall_node_rules_base:
+      # Block VMs from accessing critical Proxmox host services (IPv4)
+      - type: in
+        action: DROP
+        source: "10.72.72.0/24"
+        dport: "22,8006,3128,85,5900:5999,{{ lookup('env', 'TF_VAR_pm_ssh_port') }}"
+        proto: tcp
+        comment: "Block VMs from critical host ports (IPv4)"
+        enable: true
+        pos: 0
+      # Block VMs from accessing critical Proxmox host services (IPv6 routed prefix)
+      - type: in
+        action: DROP
+        source: "{{ proxmox_ipv6_prefix | default('::/0') }}"
+        dport: "22,8006,3128,85,5900:5999,{{ lookup('env', 'TF_VAR_pm_ssh_port') }}"
+        proto: tcp
+        comment: "Block VMs from critical host ports (IPv6 routed)"
+        enable: true
+        pos: 1
+      # Block VMs from accessing critical Proxmox host services via link-local IPv6
+      - type: in
+        action: DROP
+        source: "fe80::/10"
+        dport: "22,8006,3128,85,5900:5999,{{ lookup('env', 'TF_VAR_pm_ssh_port') }}"
+        proto: tcp
+        comment: "Block VMs from critical host ports (IPv6 link-local)"
+        enable: true
+        pos: 2
       - type: in
         action: ACCEPT
         source: "0.0.0.0/0"
@@ -98,7 +125,7 @@
         proto: tcp
         comment: "SSH access (port 22, IPv4)"
         enable: true
-        pos: 1
+        pos: 3
       - type: in
         action: ACCEPT
         source: "::/0"
@@ -106,7 +133,7 @@
         proto: tcp
         comment: "SSH access (port 22, IPv6)"
         enable: true
-        pos: 2
+        pos: 4
       - type: in
         action: ACCEPT
         source: "{{ fw_src_ip4 | default('0.0.0.0/0') }}"
@@ -114,7 +141,7 @@
         proto: tcp
         comment: "Proxmox web UI + SSH (IPv4)"
         enable: true
-        pos: 3
+        pos: 5
       - type: in
         action: ACCEPT
         source: "{{ fw_src_ip6 | default('::/0') }}"
@@ -122,14 +149,14 @@
         proto: tcp
         comment: "Proxmox web UI + SSH (IPv6)"
         enable: true
-        pos: 4
+        pos: 6
       - type: in
         action: ACCEPT
         source: "::/0"
         proto: ipv6-icmp
         comment: "IPv6 ICMP (ND, PMTUD, etc.)"
         enable: true
-        pos: 5
+        pos: 7
 
 - name: Build node firewall rules list (custom SSH port — merged with web UI)
   ansible.builtin.set_fact:
@@ -141,7 +168,7 @@
         proto: tcp
         comment: "Proxmox web UI + SSH (IPv4)"
         enable: true
-        pos: 3
+        pos: 5
       - type: in
         action: ACCEPT
         source: "{{ fw_src_ip6 | default('::/0') }}"
@@ -149,7 +176,7 @@
         proto: tcp
         comment: "Proxmox web UI + SSH (IPv6)"
         enable: true
-        pos: 4
+        pos: 6
   when: >-
     lookup('env', 'TF_VAR_pm_ssh_port') | default('') != '' and lookup('env',
     'TF_VAR_pm_ssh_port') | default('') != '22'
@@ -164,8 +191,8 @@
 - name: Combine firewall rules (base + custom SSH port merged)
   ansible.builtin.set_fact:
     proxmox_firewall_node_rules: >-
-      {{ proxmox_firewall_node_rules_base[:2] +
-      proxmox_firewall_node_rules_custom + proxmox_firewall_node_rules_base[4:]
+      {{ proxmox_firewall_node_rules_base[:5] +
+      proxmox_firewall_node_rules_custom + proxmox_firewall_node_rules_base[7:]
       }}
   when: >-
     lookup('env', 'TF_VAR_pm_ssh_port') | default('') != '' and lookup('env',
