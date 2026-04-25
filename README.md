@@ -26,6 +26,11 @@ This project provides automated provisioning of:
    - Internal IP: 10.72.72.50/24
    - IPv6 connectivity via Hetzner routed setup
    - Cloud-init based user configuration
+5. **Nextcloud VM**: Cloud storage virtual machine cloned from the template with:
+   - 2 CPU cores, 6GB RAM, 40GB disk
+   - Internal IP: 10.72.72.60/24
+   - IPv6 connectivity via Hetzner routed setup
+   - Cloud-init based user configuration
 
 ### Network Configuration
 
@@ -40,6 +45,9 @@ The project implements a dual-stack networking setup:
     - `TF_VAR_vm2_ssh_port` → SSH access
     - Port 80 → HTTP
     - Port 443 → HTTPS
+  - nextcloud (10.72.72.60):
+    - `TF_VAR_vm3_ssh_port` → SSH access
+    - Port 5050 → Nextcloud service
 
 - **IPv6 Routing**: Direct routing via Proxy NDP for each VM's public IPv6 address
 

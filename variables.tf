@@ -71,6 +71,17 @@ variable "vm2_ssh_port" {
   type        = number
 }
 
+# VM3 specific settings
+variable "vm3_ipv6" {
+  description = "IPv6 address for nextcloud"
+  type        = string
+}
+
+variable "vm3_ssh_port" {
+  description = "SSH port for VM nextcloud"
+  type        = number
+}
+
 # Firewall trusted source networks (for Proxmox web UI and custom SSH port)
 variable "fw_src_ip4" {
   description = "Trusted IPv4 networks for restricted ports (comma-separated or CIDR)"

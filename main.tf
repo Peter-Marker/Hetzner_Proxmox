@@ -38,6 +38,22 @@ resource "proxmox_virtual_environment_file" "cloud_config_web_server" {
   }
 }
 
+# Generate cloud-init configuration for nextcloud
+resource "proxmox_virtual_environment_file" "cloud_config_nextcloud" {
+  content_type = "snippets"
+  datastore_id = "local"
+  node_name    = "prox"
+  source_raw {
+    data = templatefile("${path.module}/cloud-init.tftpl", {
+      ssh_user     = var.ci_user
+      ssh_password = var.ci_password
+      ssh_key      = var.ci_ssh_key
+      ssh_port     = var.vm3_ssh_port
+    })
+    file_name = "cloud-config-nextcloud.yaml"
+  }
+}
+
 # Create a VM template from the downloaded cloud image
 resource "proxmox_virtual_environment_vm" "ubuntu_template_8001" {
   name          = "ubuntu-2404-template"
@@ -173,6 +189,53 @@ resource "proxmox_virtual_environment_vm" "web_server" {
   depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
 }
 
+# Deploy the nextcloud VM by cloning the template
+resource "proxmox_virtual_environment_vm" "nextcloud" {
+  name      = "nextcloud"
+  node_name = "prox"
+  cpu {
+    cores = 2
+    type  = "host"
+  }
+  memory {
+    dedicated = 6144
+  }
+  agent {
+    enabled = true
+  }
+  clone {
+    vm_id = 8001
+    full  = true
+  }
+  disk {
+    datastore_id = "local-zfs"
+    interface    = "scsi0"
+    size         = 40
+    iothread     = true
+    discard      = "on"
+    file_format  = "raw"
+  }
+  network_device {
+    bridge = "vmbr1"
+  }
+  initialization {
+    datastore_id = "local-zfs"
+    interface    = "ide2"
+    ip_config {
+      ipv4 {
+        address = "10.72.72.60/24"
+        gateway = "10.72.72.1"
+      }
+      ipv6 {
+        address = "${var.vm3_ipv6}/128"
+        gateway = "fe80::1"
+      }
+    }
+    user_data_file_id = proxmox_virtual_environment_file.cloud_config_nextcloud.id
+  }
+  depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
+}
+
 # Configure networking on the Proxmox host (NAT, Port Forwarding, IPv6 Routing)
 resource "null_resource" "network_setup" {
   triggers = {
@@ -188,6 +251,11 @@ resource "null_resource" "network_setup" {
     vm2_ssh_port = var.vm2_ssh_port
     pm_ip_var    = var.pm_ip
 
+    # VM3 (nextcloud) triggers
+    vm3_ip       = "10.72.72.60"
+    vm3_ipv6     = var.vm3_ipv6
+    vm3_ssh_port = var.vm3_ssh_port
+
     # Terraform will re-run the provisioner if the hash of this string changes
     script_hash = sha1(join("", [
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm1_ssh_port} -j DNAT --to-destination 10.72.72.10:${var.vm1_ssh_port}",
@@ -196,6 +264,8 @@ resource "null_resource" "network_setup" {
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm2_ssh_port} -j DNAT --to-destination 10.72.72.50:${var.vm2_ssh_port}",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 80 -j DNAT --to-destination 10.72.72.50:80",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 443 -j DNAT --to-destination 10.72.72.50:443",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm3_ssh_port} -j DNAT --to-destination 10.72.72.60:${var.vm3_ssh_port}",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 5050 -j DNAT --to-destination 10.72.72.60:5050",
       # Add future ports here to keep them tracked
     ]))
   }
@@ -230,6 +300,9 @@ resource "null_resource" "network_setup" {
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.vm2_ssh_port} -j DNAT --to-destination ${self.triggers.vm2_ip}:${self.triggers.vm2_ssh_port}",
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 80 -j DNAT --to-destination ${self.triggers.vm2_ip}:80",
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 443 -j DNAT --to-destination ${self.triggers.vm2_ip}:443",
+      # VM3 (nextcloud) port forwarding
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.vm3_ssh_port} -j DNAT --to-destination ${self.triggers.vm3_ip}:${self.triggers.vm3_ssh_port}",
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 5050 -j DNAT --to-destination ${self.triggers.vm3_ip}:5050",
       "iptables -t nat -A POSTROUTING -s 10.72.72.0/24 -o vmbr0 -j MASQUERADE",
       # IPv6 Routing & Proxy NDP: Crucial for Hetzner routed setup
       "ip6tables -I FORWARD -j ACCEPT",
@@ -237,6 +310,8 @@ resource "null_resource" "network_setup" {
       "ip -6 route replace ${self.triggers.vm_ipv6}/128 dev vmbr1",
       "ip -6 neigh replace proxy ${self.triggers.vm2_ipv6} dev vmbr0",
       "ip -6 route replace ${self.triggers.vm2_ipv6}/128 dev vmbr1",
+      "ip -6 neigh replace proxy ${self.triggers.vm3_ipv6} dev vmbr0",
+      "ip -6 route replace ${self.triggers.vm3_ipv6}/128 dev vmbr1",
       # Make rules persistent across reboots
       "netfilter-persistent save"
     ]
@@ -271,6 +346,10 @@ resource "local_file" "ansible_inventory" {
     [web_server]
     # The web server VM
     web-server ansible_host=${var.pm_ip} ansible_port=${var.vm2_ssh_port} ansible_user=${var.ci_user}
+
+    [nextcloud]
+    # The nextcloud VM
+    nextcloud ansible_host=${var.pm_ip} ansible_port=${var.vm3_ssh_port} ansible_user=${var.ci_user}
 
     [all:vars]
     # Global settings: skip SSH key confirmation for new automated nodes
