@@ -1,0 +1,37 @@
+# Fail2ban jail configuration for Proxmox
+# Managed by Ansible — do not edit manually
+
+[DEFAULT]
+# Default ban settings
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+banaction = iptables-multiport
+backend = systemd
+
+# Ignore trusted networks
+ignoreip = 127.0.0.1/8 ::1
+
+# ============================================================
+# SSH Protection
+# ============================================================
+
+[sshd]
+enabled = true
+port    = 22{% if fail2ban_ssh_port != '22' %},{{ fail2ban_ssh_port }}{% endif %}
+filter  = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime  = 2h
+
+# ============================================================
+# Proxmox Web UI Protection
+# ============================================================
+
+[proxmox-web]
+enabled = true
+port    = 8006
+filter  = proxmox-web
+logpath = /var/log/daemon.log
+maxretry = 5
+bantime  = 2h

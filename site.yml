@@ -4,4 +4,5 @@
   roles:
     - role: proxmox_base
     - role: proxmox_firewall
+    - role: proxmox_fail2ban
     - role: proxmox_acme

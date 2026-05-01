@@ -347,7 +347,7 @@ resource "local_file" "ansible_inventory" {
     # The web server VM
     web-server ansible_host=${var.pm_ip} ansible_port=${var.vm2_ssh_port} ansible_user=${var.ci_user}
 
-    [nextcloud]
+    [nextcloud_vms]
     # The nextcloud VM
     nextcloud ansible_host=${var.pm_ip} ansible_port=${var.vm3_ssh_port} ansible_user=${var.ci_user}
 

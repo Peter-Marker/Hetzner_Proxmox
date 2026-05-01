@@ -1,0 +1,56 @@
+---
+# Proxmox fail2ban Configuration
+# This role installs and configures fail2ban to protect SSH and Proxmox web UI.
+
+# ============================================================
+# Step 1: Install fail2ban
+# ============================================================
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+  register: proxmox_fail2ban_install
+  changed_when: false
+
+# ============================================================
+# Step 2: Deploy fail2ban jail configuration for Proxmox
+# ============================================================
+
+- name: Deploy fail2ban jail.local for Proxmox services
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+# ============================================================
+# Step 3: Deploy Proxmox web UI filter
+# ============================================================
+
+- name: Deploy Proxmox web UI fail2ban filter
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/filter.d/proxmox-web.conf
+    content: |
+      [Definition]
+      failregex = ^.*pvedaemon\[.*authentication failure; rhost=<HOST> user=.* msg=.*$
+                  ^.*pveproxy\[.*authentication failure; rhost=<HOST> user=.* msg=.*$
+      ignoreregex =
+      datepattern = %%Y-%%m-%%d %%H:%%M:%%S
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+# ============================================================
+# Step 4: Ensure fail2ban is enabled and started
+# ============================================================
+
+- name: Enable and start fail2ban service
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -38,3 +38,23 @@
     job: "/usr/local/bin/renew_proxmox_cert.sh"
     special_time: daily
     state: present
+
+- name: Deploy logrotate configuration for Proxmox cert renewal log
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/proxmox_cert_renew
+    content: |
+      /var/log/proxmox_cert_renew.log {
+          weekly
+          rotate 4
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 0640 root root
+          postrotate
+              # No service restart needed, script appends to new file
+          endscript
+      }
+    mode: "0644"
+    owner: root
+    group: root

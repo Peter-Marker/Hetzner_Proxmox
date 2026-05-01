@@ -91,6 +91,7 @@ Configures the Proxmox hypervisor base system:
 
 - **proxmox_base**: Prepares the underlying Proxmox node (repositories, SSH port hardened to key-only, UI tweaks)
 - **proxmox_firewall**: Manages Proxmox built-in firewall via API (rules visible in web UI, safe enable sequence)
+- **proxmox_fail2ban**: Installs and configures fail2ban for brute-force protection (SSH + Proxmox web UI)
 - **proxmox_acme**: Deploys ACME certificate renewal script and configures automatic daily cron job
 
 ## Quick Start
@@ -153,14 +154,29 @@ Hetzner_Proxmox/
 │   ├── proxmox_firewall/   # Proxmox built-in firewall management via API (rules visible in web UI)
 │   │   ├── tasks/main.yml  # Safe sequence: disable → install deps → add rules → enable → verify
 │   │   └── handlers/       # Empty (API handles reload automatically)
-│   └── proxmox_acme/       # ACME certificate renewal script + cron job
+│   ├── proxmox_fail2ban/   # fail2ban brute-force protection (SSH + Proxmox web UI)
+│   │   ├── tasks/main.yml  # Install fail2ban, deploy jail config and custom filter
+│   │   ├── handlers/       # Restart fail2ban service
+│   │   └── templates/      # jail.local.j2 template
+│   └── proxmox_acme/       # ACME certificate renewal script + cron job + logrotate
 ├── renew_proxmox_cert.sh   # Legacy ACME certificate renewal script (reference)
 └── README.md               # This file
 ```
 
 ## SSL Certificate Management
 
-SSL certificates are managed via Let's Encrypt using DNS-01 challenge through deSEC. The `proxmox_acme` Ansible role deploys the renewal script to `/usr/local/bin/renew_proxmox_cert.sh` and configures a daily cron job for automatic renewal. Set the `DEDYN_TOKEN` environment variable before running the playbook.
+SSL certificates are managed via Let's Encrypt using DNS-01 challenge through deSEC. The `proxmox_acme` Ansible role deploys the renewal script to `/usr/local/bin/renew_proxmox_cert.sh` and configures a daily cron job for automatic renewal. Set the `DEDYN_TOKEN` environment variable before running the playbook. Log rotation for `/var/log/proxmox_cert_renew.log` is configured via logrotate (weekly rotation, 4 rotations kept, compressed).
+
+## Fail2ban Protection
+
+Brute-force protection for SSH and Proxmox web UI is provided by the `proxmox_fail2ban` Ansible role:
+
+| Service | Port | Max Retries | Ban Time | Log Source |
+|---------|------|-------------|----------|------------|
+| SSH | 22, custom | 3 | 2h | /var/log/auth.log |
+| Proxmox web UI | 8006 | 5 | 2h | /var/log/daemon.log |
+
+A custom filter (`/etc/fail2ban/filter.d/proxmox-web.conf`) matches authentication failures from both `pvedaemon` and `pveproxy`.
 
 ## Network Troubleshooting
 
