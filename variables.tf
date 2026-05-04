@@ -82,6 +82,17 @@ variable "vm3_ssh_port" {
   type        = number
 }
 
+# VM4 specific settings
+variable "vm4_ipv6" {
+  description = "IPv6 address for work-station"
+  type        = string
+}
+
+variable "vm4_ssh_port" {
+  description = "SSH port for VM work-station"
+  type        = number
+}
+
 # Firewall trusted source networks (for Proxmox web UI and custom SSH port)
 variable "fw_src_ip4" {
   description = "Trusted IPv4 networks for restricted ports (comma-separated or CIDR)"
@@ -94,3 +105,11 @@ variable "fw_src_ip6" {
   type        = string
   default     = ""
 }
+
+# Work Station VM worker user
+variable "user_worker" {
+  description = "Username for the work-station VM worker user"
+  type        = string
+  default     = ""
+}
+

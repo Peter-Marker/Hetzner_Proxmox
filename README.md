@@ -31,6 +31,18 @@ This project provides automated provisioning of:
    - Internal IP: 10.72.72.60/24
    - IPv6 connectivity via Hetzner routed setup
    - Cloud-init based user configuration
+6. **Work Station VM**: Remote workstation with GUI for browser-based work cloned from the template with:
+    - 4 CPU cores, 8GB RAM, 40GB disk
+    - Internal IP: 10.72.72.40/24
+    - IPv6 connectivity via Hetzner routed setup
+    - Cloud-init based user configuration
+    - **GUI**: xfce4 + xfce4-goodies desktop environment (LightDM display manager)
+    - **Browser**: Google Chrome Stable
+    - **Remote Access**: Chrome Remote Desktop (permanent sessions via Google Relay, no inbound ports needed)
+    - **Auto-launch**: Two Chrome windows on login — Gemini (`gemini.google.com`) and Deep Research (`gemini.google.com/app/deep-research`)
+    - **24/7 session**: Sleep mode, screen lock, and DPMS disabled
+    - **Security**: UFW firewall (SSH only from trusted networks), non-root worker user (`VAR_user_worker`) with sudo
+    - **Users**: CI user (`TF_VAR_ci_user`) for SSH access (key-only), worker user for GUI/CRD
 
 ### Network Configuration
 
@@ -48,6 +60,9 @@ The project implements a dual-stack networking setup:
   - nextcloud (10.72.72.60):
     - `TF_VAR_vm3_ssh_port` → SSH access
     - Port 5050 → Nextcloud service
+  - work-station (10.72.72.40):
+    - `TF_VAR_vm4_ssh_port` → SSH access
+    - Chrome Remote Desktop uses outbound HTTPS to Google Relay (no inbound ports required)
 
 - **IPv6 Routing**: Direct routing via Proxy NDP for each VM's public IPv6 address
 
@@ -93,6 +108,7 @@ Configures the Proxmox hypervisor base system:
 - **proxmox_firewall**: Manages Proxmox built-in firewall via API (rules visible in web UI, safe enable sequence)
 - **proxmox_fail2ban**: Installs and configures fail2ban for brute-force protection (SSH + Proxmox web UI)
 - **proxmox_acme**: Deploys ACME certificate renewal script and configures automatic daily cron job
+- **work_station**: Configures the work-station VM (hostname, OS updates, timezone from `TIMEZONE` env var, UFW firewall with SSH port from `TF_VAR_vm4_ssh_port`, non-root worker user from `VAR_user_worker`, xfce4 GUI, Google Chrome, Chrome Remote Desktop, 24/7 session config, Chrome auto-launch for Gemini + Deep Research, LightDM manual login, CI user locked from GUI)
 
 ## Quick Start
 
@@ -158,7 +174,10 @@ Hetzner_Proxmox/
 │   │   ├── tasks/main.yml  # Install fail2ban, deploy jail config and custom filter
 │   │   ├── handlers/       # Restart fail2ban service
 │   │   └── templates/      # jail.local.j2 template
-│   └── proxmox_acme/       # ACME certificate renewal script + cron job + logrotate
+│   ├── proxmox_acme/       # ACME certificate renewal script + cron job + logrotate
+│   └── work_station/       # Work-station VM full configuration (GUI, Chrome, CRD, 24/7 session)
+│       ├── tasks/main.yml  # Hostname, apt upgrade, timezone, UFW, user, xfce4, Chrome, CRD, power management, autostart
+│       └── handlers/       # Restart rsyslog, lightdm, chrome, crd, reload systemd
 ├── renew_proxmox_cert.sh   # Legacy ACME certificate renewal script (reference)
 └── README.md               # This file
 ```
@@ -206,3 +225,32 @@ terraform destroy
 ```
 
 **Warning**: This will remove all VMs and networking configuration.
+
+## Chrome Remote Desktop Registration
+
+After deploying the work-station VM, CRD must be registered under the worker user:
+
+```bash
+# SSH as worker user
+ssh -p $TF_VAR_vm4_ssh_port $VAR_user_worker@$PROXMOX_IP
+
+# Stop CRD service
+sudo systemctl stop chrome-remote-desktop
+
+# Remove any existing host tokens
+sudo rm -rf ~/.config/chrome-remote-desktop/host*.json
+
+# Start CRD service
+sudo systemctl start chrome-remote-desktop
+
+# Run setup to get registration code
+chrome-remote-desktop --setup
+```
+
+1. Open https://remotedesktop.google.com/headless in your browser
+2. Click "Next" to generate a setup code
+3. Copy the code and paste it into the terminal
+4. Authorize the connection in your browser
+5. Set a PIN for remote access
+
+After registration, connecting via CRD will log in as the worker user with XFCE session (no session selection dialog).

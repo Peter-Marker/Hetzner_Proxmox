@@ -54,6 +54,22 @@ resource "proxmox_virtual_environment_file" "cloud_config_nextcloud" {
   }
 }
 
+# Generate cloud-init configuration for work-station
+resource "proxmox_virtual_environment_file" "cloud_config_work_station" {
+  content_type = "snippets"
+  datastore_id = "local"
+  node_name    = "prox"
+  source_raw {
+    data = templatefile("${path.module}/cloud-init.tftpl", {
+      ssh_user     = var.ci_user
+      ssh_password = var.ci_password
+      ssh_key      = var.ci_ssh_key
+      ssh_port     = var.vm4_ssh_port
+    })
+    file_name = "cloud-config-work-station.yaml"
+  }
+}
+
 # Create a VM template from the downloaded cloud image
 resource "proxmox_virtual_environment_vm" "ubuntu_template_8001" {
   name          = "ubuntu-2404-template"
@@ -236,6 +252,53 @@ resource "proxmox_virtual_environment_vm" "nextcloud" {
   depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
 }
 
+# Deploy the work-station VM by cloning the template
+resource "proxmox_virtual_environment_vm" "work_station" {
+  name      = "work-station"
+  node_name = "prox"
+  cpu {
+    cores = 4
+    type  = "host"
+  }
+  memory {
+    dedicated = 8192
+  }
+  agent {
+    enabled = true
+  }
+  clone {
+    vm_id = 8001
+    full  = true
+  }
+  disk {
+    datastore_id = "local-zfs"
+    interface    = "scsi0"
+    size         = 40
+    iothread     = true
+    discard      = "on"
+    file_format  = "raw"
+  }
+  network_device {
+    bridge = "vmbr1"
+  }
+  initialization {
+    datastore_id = "local-zfs"
+    interface    = "ide2"
+    ip_config {
+      ipv4 {
+        address = "10.72.72.40/24"
+        gateway = "10.72.72.1"
+      }
+      ipv6 {
+        address = "${var.vm4_ipv6}/128"
+        gateway = "fe80::1"
+      }
+    }
+    user_data_file_id = proxmox_virtual_environment_file.cloud_config_work_station.id
+  }
+  depends_on = [proxmox_virtual_environment_vm.ubuntu_template_8001]
+}
+
 # Configure networking on the Proxmox host (NAT, Port Forwarding, IPv6 Routing)
 resource "null_resource" "network_setup" {
   triggers = {
@@ -256,6 +319,14 @@ resource "null_resource" "network_setup" {
     vm3_ipv6     = var.vm3_ipv6
     vm3_ssh_port = var.vm3_ssh_port
 
+    # VM4 (work-station) triggers
+    vm4_ip       = "10.72.72.40"
+    vm4_ipv6     = var.vm4_ipv6
+    vm4_ssh_port = var.vm4_ssh_port
+
+    # Migration trigger - forces re-run of provisioner with all VM rules
+    migration_v2 = "2026-05-04-fix-idempotent"
+
     # Terraform will re-run the provisioner if the hash of this string changes
     script_hash = sha1(join("", [
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm1_ssh_port} -j DNAT --to-destination 10.72.72.10:${var.vm1_ssh_port}",
@@ -266,6 +337,7 @@ resource "null_resource" "network_setup" {
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 443 -j DNAT --to-destination 10.72.72.50:443",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm3_ssh_port} -j DNAT --to-destination 10.72.72.60:${var.vm3_ssh_port}",
       "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport 5050 -j DNAT --to-destination 10.72.72.60:5050",
+      "iptables -t nat -A PREROUTING -d ${var.pm_ip}/32 -p tcp --dport ${var.vm4_ssh_port} -j DNAT --to-destination 10.72.72.40:${var.vm4_ssh_port}",
       # Add future ports here to keep them tracked
     ]))
   }
@@ -303,28 +375,38 @@ resource "null_resource" "network_setup" {
       # VM3 (nextcloud) port forwarding
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.vm3_ssh_port} -j DNAT --to-destination ${self.triggers.vm3_ip}:${self.triggers.vm3_ssh_port}",
       "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 5050 -j DNAT --to-destination ${self.triggers.vm3_ip}:5050",
+      # VM4 (work-station) port forwarding
+      "iptables -t nat -A PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.vm4_ssh_port} -j DNAT --to-destination ${self.triggers.vm4_ip}:${self.triggers.vm4_ssh_port}",
+      # MASQUERADE: delete existing then add (idempotent)
+      "iptables -t nat -D POSTROUTING -s 10.72.72.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || true",
       "iptables -t nat -A POSTROUTING -s 10.72.72.0/24 -o vmbr0 -j MASQUERADE",
       # IPv6 Routing & Proxy NDP: Crucial for Hetzner routed setup
-      "ip6tables -I FORWARD -j ACCEPT",
+      "ip6tables -D FORWARD -j ACCEPT 2>/dev/null || true",
+      "ip6tables -A FORWARD -j ACCEPT",
       "ip -6 neigh replace proxy ${self.triggers.vm_ipv6} dev vmbr0",
       "ip -6 route replace ${self.triggers.vm_ipv6}/128 dev vmbr1",
       "ip -6 neigh replace proxy ${self.triggers.vm2_ipv6} dev vmbr0",
       "ip -6 route replace ${self.triggers.vm2_ipv6}/128 dev vmbr1",
       "ip -6 neigh replace proxy ${self.triggers.vm3_ipv6} dev vmbr0",
       "ip -6 route replace ${self.triggers.vm3_ipv6}/128 dev vmbr1",
+      # VM4 (work-station) IPv6 routing
+      "ip -6 neigh replace proxy ${self.triggers.vm4_ipv6} dev vmbr0",
+      "ip -6 route replace ${self.triggers.vm4_ipv6}/128 dev vmbr1",
       # Make rules persistent across reboots
       "netfilter-persistent save"
     ]
   }
   # Cleanup networking rules on resource destruction
+  # NOTE: Only VM1 rules are cleaned up here due to Terraform's limitation on
+  # destroy-time provisioner references. VM2/VM3/VM4 rules are cleaned up on
+  # next full destroy/recreate cycle.
   provisioner "remote-exec" {
     when = destroy
     inline = [
       "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport ${self.triggers.port} -j DNAT --to-destination ${self.triggers.vm_ip}:${self.triggers.port} || true",
       "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 8000 -j DNAT --to-destination ${self.triggers.vm_ip}:8000 || true",
       "iptables -t nat -D PREROUTING -d ${self.triggers.pm_ip}/32 -p tcp --dport 9000 -j DNAT --to-destination ${self.triggers.vm_ip}:9000 || true",
-      "ip -6 neigh del proxy ${self.triggers.vm_ipv6} dev vmbr0 || true",
-      "netfilter-persistent save"
+      "ip -6 neigh del proxy ${self.triggers.vm_ipv6} dev vmbr0 || true"
     ]
     on_failure = continue
   }
@@ -350,6 +432,14 @@ resource "local_file" "ansible_inventory" {
     [nextcloud_vms]
     # The nextcloud VM
     nextcloud ansible_host=${var.pm_ip} ansible_port=${var.vm3_ssh_port} ansible_user=${var.ci_user}
+
+    [work_station]
+    # The work-station VM
+    work-station ansible_host=${var.pm_ip} ansible_port=${var.vm4_ssh_port} ansible_user=${var.ci_user}
+
+    [work_station:vars]
+    # Worker user for the work-station VM
+    worker_user=${var.user_worker}
 
     [all:vars]
     # Global settings: skip SSH key confirmation for new automated nodes
